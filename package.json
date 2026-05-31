@@ -1,0 +1,24 @@
+{
+  "name": "kseip-backend",
+  "version": "1.0.0",
+  "description": "Backend API and scientific processing services for the Kogi State Environmental Intelligence Platform.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {}
+}
+
