@@ -6,6 +6,82 @@ function hasValue(value) {
   return Boolean(String(value ?? "").trim());
 }
 
+/**
+ * @swagger
+ * tags:
+ *   name: Status
+ *   description: Service status and configuration API
+ */
+
+/**
+ * @swagger
+ * /api/status:
+ *   get:
+ *     summary: Get service status and external data source configuration
+ *     tags: [Status]
+ *     responses:
+ *       200:
+ *         description: Service status and data source configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   description: Overall service status
+ *                 service:
+ *                   type: string
+ *                   description: Service identifier
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                   description: Time when the status was checked
+ *                 sources:
+ *                   type: object
+ *                   description: External data sources configuration
+ *                   properties:
+ *                     open_meteo:
+ *                       type: object
+ *                       properties:
+ *                         configured:
+ *                           type: boolean
+ *                           description: Whether OpenMeteo source is configured
+ *                         role:
+ *                           type: string
+ *                           description: Role of the data source
+ *                     waqi:
+ *                       type: object
+ *                       properties:
+ *                         configured:
+ *                           type: boolean
+ *                           description: Whether WAQI source is configured
+ *                         role:
+ *                           type: string
+ *                           description: Role of the data source
+ *                     openaq:
+ *                       type: object
+ *                       properties:
+ *                         configured:
+ *                           type: boolean
+ *                           description: Whether OpenAQ source is configured
+ *                         role:
+ *                           type: string
+ *                           description: Role of the data source
+ *                     nasa_firms:
+ *                       type: object
+ *                       properties:
+ *                         configured:
+ *                           type: boolean
+ *                           description: Whether NASA FIRMS source is configured
+ *                         role:
+ *                           type: string
+ *                           description: Role of the data source
+ *       400:
+ *         description: Bad request
+ *       500:
+ *         description: Internal server error
+ */
 router.get("/", (req, res) => {
   res.json({
     status: "ok",

@@ -2,6 +2,8 @@ import "dotenv/config";
 import compression from "compression";
 import cors from "cors";
 import express from "express";
+import swaggerUi from "swagger-ui-express";
+import { specs } from "./swaggerOptions.js";
 import aqiRoutes from "./routes/aqi.js";
 import climateRoutes from "./routes/climate.js";
 import fireRoutes from "./routes/fire.js";
@@ -39,6 +41,9 @@ app.use(
     }
   })
 );
+
+// Serve Swagger documentation
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 
 app.use("/api/aqi", aqiRoutes);
 app.use("/api/meteo", meteoRoutes);
@@ -95,6 +100,7 @@ app.use((error, req, res, next) => {
 app.listen(port, () => {
   console.log(`[server] KSEIP backend listening on port ${port}`);
   console.log(`[server] CORS origins: ${corsOrigins.join(", ")}`);
+  console.log(`[server] Swagger documentation available at http://localhost:${port}/api-docs`);
   startAqiPolling();
   startMeteoRefresh();
 });
