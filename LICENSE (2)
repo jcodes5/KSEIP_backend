@@ -1,0 +1,149 @@
+KSEIP PROPRIETARY LICENSE
+Version 1.0
+
+Copyright (c) 2026 Kogi State Environmental Intelligence Platform.
+All rights reserved.
+
+================================================================================
+IMPORTANT — READ CAREFULLY BEFORE ACCESSING, CLONING, OR CONTRIBUTING
+================================================================================
+
+This software, its source code, documentation, configuration files, and all
+associated materials (collectively, the "Software") are the exclusive property
+of the copyright holder named above.
+
+--------------------------------------------------------------------------------
+1. ALL RIGHTS RESERVED
+--------------------------------------------------------------------------------
+
+No rights are granted to any individual, organisation, government entity, or
+automated system except as explicitly stated in Section 2 of this License.
+
+Unless you have received a separate written agreement signed by the copyright
+holder, you are expressly prohibited from:
+
+  a) Using, running, or executing the Software or any part of it for any
+     purpose, including internal, governmental, commercial, academic, or
+     personal use;
+
+  b) Deploying or hosting the Software or any derivative of it on any server,
+     cloud platform, container, device, or infrastructure, whether public or
+     private;
+
+  c) Copying, reproducing, or duplicating the Software or any portion of it
+     beyond what is strictly necessary to submit a contribution as defined
+     in Section 2;
+
+  d) Modifying, adapting, translating, or creating derivative works based on
+     the Software outside of the contribution process defined in Section 2;
+
+  e) Distributing, sublicensing, selling, renting, leasing, or otherwise
+     transferring the Software or any rights in it to any third party;
+
+  f) Incorporating the Software or any part of it into another product,
+     system, or codebase;
+
+  g) Reverse engineering, decompiling, or disassembling the Software where
+     the source code is not already provided;
+
+  h) Removing, altering, or obscuring this License, any copyright notice, or
+     any attribution statement from any copy of the Software.
+
+--------------------------------------------------------------------------------
+2. PERMITTED COLLABORATION
+--------------------------------------------------------------------------------
+
+The following actions are permitted solely for the purpose of contributing
+improvements, bug fixes, or additions to the official repository maintained
+by the copyright holder:
+
+  a) Cloning or forking the repository to a private workspace for the sole
+     purpose of preparing a contribution (pull request or patch);
+
+  b) Reading, studying, and modifying the source code strictly within that
+     private workspace for the purpose of preparing said contribution;
+
+  c) Submitting pull requests, patches, or other proposed changes to the
+     official repository through its designated contribution channel.
+
+This permission is conditional. It is immediately revoked if:
+
+  - The cloned or forked copy is used for any purpose other than preparing
+    a contribution to the official repository; or
+
+  - The contributor fails to comply with the Contributing Guidelines
+    published in the official repository (CONTRIBUTING.md); or
+
+  - The copyright holder notifies the contributor in writing that their
+    access has been revoked.
+
+Accessing the repository to read or study the code without contributing does
+not constitute permitted collaboration and does not grant any rights under
+this License.
+
+--------------------------------------------------------------------------------
+3. CONTRIBUTOR ASSIGNMENT
+--------------------------------------------------------------------------------
+
+By submitting any contribution (code, documentation, configuration, or other
+material) to the official repository, the contributor:
+
+  a) Represents that the contribution is their original work and that they
+     have the right to submit it;
+
+  b) Irrevocably assigns to the copyright holder all rights, title, and
+     interest in the contribution, including all intellectual property rights,
+     to the fullest extent permitted by applicable law;
+
+  c) Agrees that the copyright holder may incorporate, modify, or distribute
+     the contribution under any terms the copyright holder chooses, without
+     obligation to the contributor.
+
+If an assignment of rights is not enforceable under the laws of your
+jurisdiction, the contributor grants the copyright holder a perpetual,
+irrevocable, worldwide, royalty-free, exclusive licence to use, reproduce,
+modify, and distribute the contribution.
+
+--------------------------------------------------------------------------------
+4. NO WARRANTY
+--------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, ACCURACY OF DATA, OR NON-INFRINGEMENT.
+
+THE COPYRIGHT HOLDER ASSUMES NO LIABILITY FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING FROM ACCESS
+TO OR ATTEMPTED USE OF THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES.
+
+--------------------------------------------------------------------------------
+5. GOVERNING LAW
+--------------------------------------------------------------------------------
+
+This License shall be governed by and construed in accordance with the laws
+of the Federal Republic of Nigeria, without regard to its conflict of law
+provisions. Any dispute arising under this License shall be subject to the
+exclusive jurisdiction of the courts of Kogi State, Nigeria.
+
+--------------------------------------------------------------------------------
+6. TERMINATION
+--------------------------------------------------------------------------------
+
+Any rights granted under Section 2 terminate automatically and without notice
+if the contributor violates any term of this License. Upon termination, the
+contributor must immediately destroy all copies of the Software in their
+possession or control.
+
+--------------------------------------------------------------------------------
+7. CONTACT
+--------------------------------------------------------------------------------
+
+To request a written use agreement, report a licensing concern, or seek
+clarification on the terms of this License, contact the copyright holder
+through the official repository.
+
+================================================================================
+IF YOU DO NOT AGREE TO THESE TERMS, DO NOT ACCESS, CLONE, OR INTERACT
+WITH THIS REPOSITORY IN ANY WAY.
+================================================================================
