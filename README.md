@@ -1,3 +1,6 @@
+<img width="1919" height="827" alt="Screenshot 2026-06-08 223243" src="https://github.com/user-attachments/assets/de74c04c-2273-44c1-8a45-ab46be624c0b" />
+<img width="790" height="533" alt="Screenshot 2026-06-08 223220" src="https://github.com/user-attachments/assets/c5c2450c-dc68-41bd-99af-ae7358c9ec69" />
+<img width="1919" height="736" alt="Screenshot 2026-06-08 223150" src="https://github.com/user-attachments/assets/88788d99-b38a-4620-b8a5-d57976d66ff1" />
 # KSEIP Backend
 
 > Express API server for the **Kogi State Environmental Intelligence Platform** — scientific data aggregation, caching, advisory logic, and plume modelling for Kogi State, Nigeria.
