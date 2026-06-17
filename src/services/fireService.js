@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from './utils.js';
+import { logger } from "../logger.js";
 
 const FIRMS_CACHE_MS = 60 * 60 * 1000;
 const KOGI_BBOX = process.env.FIRMS_KOGI_BBOX ?? "5.3,6.4,7.9,8.8";
@@ -39,6 +40,7 @@ function normalizeHotspots(rows) {
       brightness: Number(row.bright_ti4 ?? row.brightness ?? 0),
       frp: Number(row.frp ?? 0),
       confidence: row.confidence,
+      confidence_percent: confidenceScore(row),
       confidence_score: confidenceScore(row),
       acquisition_date: row.acq_date,
       acquisition_time: row.acq_time,
@@ -76,7 +78,7 @@ export async function getFireHotspots(days = 5) {
   const cacheKey = `${dayRange}:${KOGI_BBOX}:${FIRMS_SOURCE}`;
 
   if (fireCache?.cacheKey === cacheKey && Date.now() - fireCache.cachedAt < FIRMS_CACHE_MS) {
-    console.log("[fire] cache hit: NASA FIRMS hotspots");
+    logger.info("Fire cache hit", { source: "NASA FIRMS", product: FIRMS_SOURCE });
     return fireCache.data;
   }
 
@@ -85,7 +87,7 @@ export async function getFireHotspots(days = 5) {
     throw serviceError("NASA_FIRMS_MAP_KEY is not configured on the backend.", "FIRMS_KEY_MISSING", 503);
   }
 
-  console.log("[fire] cache miss: fetching NASA FIRMS hotspots");
+  logger.info("Fire cache miss; fetching NASA FIRMS hotspots", { product: FIRMS_SOURCE, bbox: KOGI_BBOX, day_range: dayRange });
   
   // Try the primary endpoint first
   const timeout = Number(process.env.FETCH_TIMEOUT_MS ?? 45000); // Longer timeout for CSV data
@@ -120,16 +122,16 @@ export async function getFireHotspots(days = 5) {
 
     return data;
   } catch (error) {
-    console.error("[fire] Primary endpoint failed:", error.message);
+    logger.error("NASA FIRMS primary endpoint failed", { message: error.message, code: error.code });
     
     // Log specific error details for DNS resolution issues
     if (error.message.includes('ENOTFOUND')) {
-      console.error(`[fire] DNS resolution failed for nrt4.modaps.eosdis.nasa.gov. This may be due to network issues or service unavailability.`);
+      logger.error("NASA FIRMS DNS resolution failed", { hostname: "nrt4.modaps.eosdis.nasa.gov" });
     }
     
     // If we have cached data that's not too old, return it instead of failing completely
     if (fireCache?.cacheKey === cacheKey && Date.now() - fireCache.cachedAt < FIRMS_CACHE_MS * 2) {
-      console.warn("[fire] Returning older cached data due to endpoint failure");
+      logger.warn("Returning older cached fire data due to endpoint failure", { cache_key: cacheKey });
       return {
         ...fireCache.data,
         degraded: true,
@@ -140,7 +142,7 @@ export async function getFireHotspots(days = 5) {
     }
     
     // Return an explicitly degraded empty dataset so users do not interpret it as confirmed zero hotspots.
-    console.warn("[fire] Returning degraded empty dataset due to endpoint failure");
+    logger.warn("Returning degraded empty fire dataset due to endpoint failure", { cache_key: cacheKey });
     return {
       source: "NASA FIRMS",
       product: FIRMS_SOURCE,

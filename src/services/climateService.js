@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from "./utils.js";
+import { logger } from "../logger.js";
 const CLIMATE_TTL_MS = Number(process.env.CLIMATE_CACHE_DAYS ?? 30) * 24 * 60 * 60 * 1000;
 const LOKOJA_LAT = Number(process.env.LOKOJA_LAT ?? 7.8);
 const LOKOJA_LON = Number(process.env.LOKOJA_LON ?? 6.74);
@@ -149,7 +150,7 @@ export function mannKendall(values) {
   };
 }
 
-function spiFromAnnualPrecip(years, values) {
+export function calculateAnnualSpi(years, values) {
   const valid = values.filter((value) => Number.isFinite(value));
   if (valid.length < 3) return [];
   const mean = valid.reduce((sum, value) => sum + value, 0) / valid.length;
@@ -293,7 +294,7 @@ async function buildEnsoCorrelation(param, years, values) {
       r: pearsonCorrelation(ensoValues, values)
     };
   } catch (error) {
-    console.error("[climate] ENSO correlation unavailable:", error.message);
+    logger.warn("ENSO correlation unavailable", { message: error.message, code: error.code });
     return {
       index: "NOAA CPC Nino 3.4 SST anomaly",
       method: "Pearson correlation against annual rainfall totals",
@@ -310,18 +311,18 @@ export async function getClimateTrend(param = "T2M", years = 30) {
   const cached = climateCache.get(cacheKey);
 
   if (cached && Date.now() - cached.cachedAt < CLIMATE_TTL_MS) {
-    console.log(`[climate] cache hit: ${cacheKey}`);
+    logger.info("Climate cache hit", { cache_key: cacheKey });
     return cached.data;
   }
 
-  console.log(`[climate] cache miss: ${cacheKey}`);
+  logger.info("Climate cache miss", { cache_key: cacheKey });
   let annual;
   let source = "Open-Meteo Archive ERA5";
 
   try {
     annual = await fetchOpenMeteoArchive(normalizedParam, normalizedYears);
   } catch (error) {
-    console.error("[climate] Open-Meteo Archive failed; falling back to NASA POWER:", error.message);
+    logger.warn("Open-Meteo Archive failed; falling back to NASA POWER", { message: error.message, code: error.code });
     annual = await fetchNasaPower(normalizedParam, normalizedYears);
     source = "NASA POWER fallback";
   }
@@ -336,7 +337,7 @@ export async function getClimateTrend(param = "T2M", years = 30) {
     baseline_period: "1991-2020",
     source,
     mann_kendall: mk,
-    spi: normalizedParam === "PRECTOTCORR" ? spiFromAnnualPrecip(annual.years, annual.values) : null,
+    spi: normalizedParam === "PRECTOTCORR" ? calculateAnnualSpi(annual.years, annual.values) : null,
     enso_correlation: await buildEnsoCorrelation(normalizedParam, annual.years, annual.values)
   };
 

@@ -1,5 +1,5 @@
 import express from "express";
-import { getAqiHistory, getCurrentAqi } from "../services/aqiService.js";
+import { getAqiHistory, getAqiHistoryExport, getAqiLocations, getAqiPollingConfig, getCurrentAqi } from "../services/aqiService.js";
 
 const router = express.Router();
 
@@ -51,9 +51,12 @@ const router = express.Router();
 router.get("/current", async (req, res, next) => {
   try {
     const location = req.query.location ?? "lokoja";
+    console.log(`Received AQI request for location: ${location}`); // Basic logging
     const data = await getCurrentAqi(location);
+    console.log(`Returning AQI data for location: ${data.location_id || data.location}`); // Verify what's being returned
     res.json(data);
   } catch (error) {
+    console.error(`Error getting current AQI for location ${req.query.location}:`, error);
     next(error);
   }
 });
@@ -100,12 +103,41 @@ router.get("/current", async (req, res, next) => {
 router.get("/history", async (req, res, next) => {
   try {
     const location = req.query.location ?? "lokoja";
-    const hours = req.query.hours ?? 24;
+    const hours = req.query.hours ?? 168;
     const data = await getAqiHistory(location, hours);
     res.json(data);
   } catch (error) {
     next(error);
   }
+});
+
+async function sendAqiHistoryExport(req, res, next) {
+  try {
+    const location = req.query.location ?? "lokoja";
+    const hours = req.query.hours ?? 168;
+    const format = req.query.format ?? "csv";
+    const exportPayload = await getAqiHistoryExport(location, hours, format);
+    res.setHeader("Content-Type", exportPayload.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${exportPayload.filename}"`);
+    res.send(exportPayload.body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/history/export", sendAqiHistoryExport);
+router.get("/export", sendAqiHistoryExport);
+
+router.get("/locations", (req, res) => {
+  res.json({
+    locations: getAqiLocations()
+  });
+});
+
+router.get("/polling-config", (req, res) => {
+  res.json({
+    locations: getAqiPollingConfig()
+  });
 });
 
 export default router;

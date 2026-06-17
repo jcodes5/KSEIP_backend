@@ -1,8 +1,11 @@
 import { fetchWithTimeout } from "./utils.js";
+import { logger } from "../logger.js";
+import cron from "node-cron";
 const AQI_CACHE_MS = Number(process.env.AQI_CACHE_HOURS ?? 24) * 60 * 60 * 1000;
 const AQI_FRESH_MS = Number(process.env.WAQI_POLL_MINUTES ?? 60) * 60 * 1000;
 const AQI_STALE_BADGE_MS = 2 * 60 * 60 * 1000;
 const WAQI_DAILY_LIMIT = Number(process.env.WAQI_DAILY_LIMIT ?? 1000);
+const MAX_HISTORY_HOURS = 24 * 7;
 
 const LOCATIONS = {
   lokoja: {
@@ -33,6 +36,20 @@ const LOCATIONS = {
     longitude: 6.9,
     waqiStation: "geo:7.48;6.90"
   },
+  kabba: {
+    id: "kabba",
+    name: "Kabba",
+    latitude: 7.83,
+    longitude: 6.07,
+    waqiStation: "geo:7.83;6.07"
+  },
+  idah: {
+    id: "idah",
+    name: "Idah",
+    latitude: 7.11,
+    longitude: 6.73,
+    waqiStation: "geo:7.11;6.73"
+  },
   nearest: {
     id: "nearest",
     name: "Nearest observed station",
@@ -57,7 +74,7 @@ function serviceError(message, code, status = 503) {
 }
 
 function normalizeLocation(location = "lokoja") {
-  const id = String(location).trim().toLowerCase();
+  const id = String(location).trim().toLowerCase().replace(/\s+/g, "-");
   return LOCATIONS[id] ?? LOCATIONS.lokoja;
 }
 
@@ -116,7 +133,7 @@ function dominantPollutantFromOpenMeteo(current) {
   return candidates[0]?.[0] ?? "us_aqi";
 }
 
-function buildOpenMeteoAqUrl(location, mode = "current") {
+function buildOpenMeteoAqUrl(location, mode = "current", hours = 24) {
   const variables = [
     "us_aqi",
     "us_aqi_pm2_5",
@@ -132,16 +149,22 @@ function buildOpenMeteoAqUrl(location, mode = "current") {
     "sulphur_dioxide",
     "ozone"
   ].join(",");
+  const requestedHours = Math.max(1, Math.min(Number(hours) || 24, MAX_HISTORY_HOURS));
   const params = new URLSearchParams({
     latitude: String(location.latitude),
     longitude: String(location.longitude),
     current: variables,
     hourly: variables,
-    past_hours: mode === "history" ? "24" : "3",
     forecast_hours: "24",
     timezone: "Africa/Lagos",
     domains: "cams_global"
   });
+
+  if (mode === "history") {
+    params.set("past_days", String(Math.ceil(requestedHours / 24)));
+  } else {
+    params.set("past_hours", "3");
+  }
 
   return `https://air-quality-api.open-meteo.com/v1/air-quality?${params.toString()}`;
 }
@@ -155,8 +178,8 @@ async function fetchJson(url, code) {
   return response.json();
 }
 
-async function fetchOpenMeteoAq(location, mode = "current") {
-  const payload = await fetchJson(buildOpenMeteoAqUrl(location, mode), "OPEN_METEO_AQ");
+async function fetchOpenMeteoAq(location, mode = "current", hours = 24) {
+  const payload = await fetchJson(buildOpenMeteoAqUrl(location, mode, hours), "OPEN_METEO_AQ");
   const current = payload.current;
   if (!current) {
     throw serviceError("Open-Meteo Air Quality response did not include current conditions.", "OPEN_METEO_AQ_BAD_RESPONSE");
@@ -165,8 +188,8 @@ async function fetchOpenMeteoAq(location, mode = "current") {
   const timestamp = current.time ? new Date(current.time).toISOString() : new Date().toISOString();
   return {
     reading: {
-      location: location.name,
-      location_id: location.id,
+      location: location.name,  // Ensure correct location name is used
+      location_id: location.id, // Ensure correct location ID is used
       latitude: location.latitude,
       longitude: location.longitude,
       aqi: Number(current.us_aqi ?? 0),
@@ -224,7 +247,7 @@ async function fetchWaqiValidation(location) {
     const payload = await response.json();
     return normalizeWaqi(payload, location);
   } catch (error) {
-    console.error(`[aqi] WAQI validation failed for ${location.id}:`, error.message);
+    logger.warn("WAQI validation failed", { location_id: location.id, message: error.message, code: error.code });
     return {
       source: "WAQI",
       error: true,
@@ -254,7 +277,7 @@ async function fetchOpenAqValidation(location) {
     
     // Handle 404 specifically - it means no data is available for this location
     if (response.status === 404) {
-      console.log(`[aqi] OpenAQ no data available for location ${location.id}`);
+      logger.info("OpenAQ no data available for location", { location_id: location.id });
       return {
         source: "OpenAQ",
         message: "No monitoring stations found in your area",
@@ -280,7 +303,7 @@ async function fetchOpenAqValidation(location) {
   } catch (error) {
     // Special handling for 404 errors
     if (error.message.includes('404')) {
-      console.log(`[aqi] OpenAQ validation failed for ${location.id} (404): Location not found`);
+      logger.info("OpenAQ validation returned no station for location", { location_id: location.id });
       return {
         source: "OpenAQ",
         message: "No monitoring stations found in your area",
@@ -288,7 +311,7 @@ async function fetchOpenAqValidation(location) {
       };
     }
     
-    console.error(`[aqi] OpenAQ validation failed for ${location.id}:`, error.message);
+    logger.warn("OpenAQ validation failed", { location_id: location.id, message: error.message, code: error.code });
     return {
       source: "OpenAQ",
       error: true,
@@ -307,19 +330,33 @@ function conservativeAqi(primaryReading, validations) {
 
 export async function getCurrentAqi(locationId = "lokoja", options = {}) {
   const location = normalizeLocation(locationId);
+  logger.debug("Processing AQI request", { requested_location: locationId, resolved_location: location.id, location_name: location.name });
+  
   const cached = latestCached(location.id);
 
   if (!options.forceRefresh && cached) {
     const cacheAge = Date.now() - new Date(cached.cached_at ?? cached.timestamp).getTime();
     if (cacheAge < AQI_FRESH_MS) {
-      console.log(`[aqi] cache hit: ${location.id}`);
-      return withFreshness(cached);
+      logger.info("AQI cache hit", { location_id: location.id });
+      // Validate that cached data is for the correct location
+      if (cached.location_id !== location.id) {
+        logger.warn("Cached data location mismatch", { 
+          requested: location.id, 
+          cached_for: cached.location_id,
+          using_cached: false
+        });
+        // Don't return mismatched cached data
+      } else {
+        return withFreshness(cached);
+      }
     }
   }
 
-  console.log(`[aqi] Open-Meteo AQ primary fetch: ${location.id}`);
+  logger.info("Open-Meteo AQ primary fetch", { location_id: location.id, latitude: location.latitude, longitude: location.longitude });
   try {
     const { reading } = await fetchOpenMeteoAq(location);
+    logger.debug("Successfully fetched data for location", { location_id: location.id, aqi: reading.aqi });
+    
     const validationSources = (await Promise.all([
       fetchWaqiValidation(location),
       fetchOpenAqValidation(location)
@@ -327,16 +364,33 @@ export async function getCurrentAqi(locationId = "lokoja", options = {}) {
 
     const cachedReading = {
       ...reading,
+      location: location.name,  // Ensure location name is correct
+      location_id: location.id, // Ensure location id is correct
       validation_sources: validationSources,
       advisory_aqi: conservativeAqi(reading, validationSources),
       cached_at: new Date().toISOString()
     };
+    
+    // Double-check that the reading has the correct location before caching
+    if (cachedReading.location_id !== location.id) {
+      logger.error("Location ID mismatch in reading", {
+        requested: location.id,
+        reading_location_id: cachedReading.location_id
+      });
+      throw new Error(`Location ID mismatch: requested ${location.id}, got ${cachedReading.location_id || 'undefined'}`);
+    }
+    
     pushCache(location.id, cachedReading);
     return withFreshness(cachedReading);
   } catch (error) {
-    console.error(`[aqi] Open-Meteo AQ primary fetch failed for ${location.id}:`, error.message);
+    logger.error("Open-Meteo AQ primary fetch failed", { 
+      location_id: location.id, 
+      location_name: location.name,
+      message: error.message, 
+      code: error.code 
+    });
     if (cached) {
-      console.log(`[aqi] serving stale cached reading: ${location.id}`);
+      logger.warn("Serving stale AQI cached reading", { location_id: location.id });
       return withFreshness(cached, true);
     }
     throw error;
@@ -345,62 +399,189 @@ export async function getCurrentAqi(locationId = "lokoja", options = {}) {
 
 export async function getAqiHistory(locationId = "lokoja", hours = 24) {
   const location = normalizeLocation(locationId);
-  const requestedHours = Math.max(1, Math.min(Number(hours) || 24, 24));
+  const requestedHours = Math.max(1, Math.min(Number(hours) || MAX_HISTORY_HOURS, MAX_HISTORY_HOURS));
 
   try {
-    const { hourly } = await fetchOpenMeteoAq(location, "history");
+    const { hourly } = await fetchOpenMeteoAq(location, "history", requestedHours);
     const time = hourly?.time ?? [];
     const aqi = hourly?.us_aqi ?? [];
     const pm25 = hourly?.pm2_5 ?? [];
+    const pm10 = hourly?.pm10 ?? [];
+    const no2 = hourly?.nitrogen_dioxide ?? [];
+    const so2 = hourly?.sulphur_dioxide ?? [];
+    const co = hourly?.carbon_monoxide ?? [];
+    const o3 = hourly?.ozone ?? [];
     const rows = time.slice(-requestedHours).map((timestamp, index, arr) => {
       const sourceIndex = time.length - arr.length + index;
       return {
         timestamp: new Date(timestamp).toISOString(),
         aqi: Number(aqi[sourceIndex] ?? 0),
-        pm25: Number(pm25[sourceIndex] ?? 0)
+        pm25: Number(pm25[sourceIndex] ?? 0),
+        pm10: Number(pm10[sourceIndex] ?? 0),
+        no2: Number(no2[sourceIndex] ?? 0),
+        so2: Number(so2[sourceIndex] ?? 0),
+        co: Number(co[sourceIndex] ?? 0),
+        o3: Number(o3[sourceIndex] ?? 0),
+        latitude: location.latitude,
+        longitude: location.longitude
       };
     });
 
     return {
-      location: location.name,
+      location: location.name,  // Ensure correct location name is used
+      location_id: location.id, // Ensure correct location ID is used
       timeseries: rows,
       cached_at: new Date().toISOString(),
       primary_source: "Open-Meteo Air Quality"
     };
   } catch (error) {
-    console.error(`[aqi] Open-Meteo AQ history failed for ${location.id}:`, error.message);
+    logger.error("Open-Meteo AQ history failed", { location_id: location.id, message: error.message, code: error.code });
     const cutoff = Date.now() - requestedHours * 60 * 60 * 1000;
     const rows = (cache.get(location.id) ?? []).filter((row) => new Date(row.timestamp).getTime() >= cutoff);
+    
     if (rows.length === 0) throw error;
+    
+    // Filter cached rows to ensure they're for the correct location
+    const filteredRows = rows.filter(row => row.location_id === location.id || !row.location_id);
+    
+    if (filteredRows.length === 0) {
+      logger.warn("No valid cached data for requested location", { location_id: location.id });
+      throw error;
+    }
+    
     return {
-      location: location.name,
-      timeseries: rows.map((row) => ({
+      location: location.name,  // Ensure correct location name is used
+      location_id: location.id, // Ensure correct location ID is used
+      timeseries: filteredRows.map((row) => ({
         timestamp: row.timestamp,
         aqi: row.aqi,
-        pm25: row.pm25
+        pm25: row.pm25,
+        pm10: row.pm10,
+        no2: row.no2,
+        so2: row.so2,
+        co: row.co,
+        o3: row.o3,
+        latitude: location.latitude,
+        longitude: location.longitude
       })),
-      cached_at: rows[rows.length - 1]?.cached_at ?? new Date().toISOString(),
+      cached_at: filteredRows[filteredRows.length - 1]?.cached_at ?? new Date().toISOString(),
       primary_source: "cache",
       stale: true
     };
   }
 }
 
-export function startAqiPolling() {
-  const pollMs = Number(process.env.WAQI_POLL_MINUTES ?? 60) * 60 * 1000;
-  setInterval(async () => {
-    for (const location of Object.values(LOCATIONS)) {
-      try {
-        await getCurrentAqi(location.id, { forceRefresh: true });
-        console.log(`[aqi] scheduled Open-Meteo AQ refresh complete: ${location.id}`);
-      } catch (error) {
-        console.error(`[aqi] scheduled refresh failed for ${location.id}:`, error.message);
-      }
+function escapeCsv(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+export async function getAqiHistoryExport(locationId = "lokoja", hours = MAX_HISTORY_HOURS, format = "csv") {
+  const location = normalizeLocation(locationId);
+  const history = await getAqiHistory(location.id, hours);
+  const normalizedFormat = String(format ?? "csv").toLowerCase();
+
+  if (normalizedFormat === "geojson") {
+    return {
+      contentType: "application/geo+json",
+      filename: `aqi-history-${location.id}-${history.timeseries.length}h.geojson`,
+      body: JSON.stringify({
+        type: "FeatureCollection",
+        properties: {
+          location: history.location,
+          source: history.primary_source,
+          hours: Number(hours),
+          generated_at: new Date().toISOString()
+        },
+        features: history.timeseries.map((row) => ({
+          type: "Feature",
+          properties: {
+            timestamp: row.timestamp,
+            aqi: row.aqi,
+            pm25: row.pm25,
+            pm10: row.pm10,
+            no2: row.no2,
+            so2: row.so2,
+            co: row.co,
+            o3: row.o3
+          },
+          geometry: {
+            type: "Point",
+            coordinates: [location.longitude, location.latitude]
+          }
+        }))
+      })
+    };
+  }
+
+  const columns = ["timestamp", "location_id", "location", "aqi", "pm25", "pm10", "no2", "so2", "co", "o3", "latitude", "longitude"];
+  const rows = history.timeseries.map((row) => [
+    row.timestamp,
+    location.id,
+    history.location,
+    row.aqi,
+    row.pm25,
+    row.pm10,
+    row.no2,
+    row.so2,
+    row.co,
+    row.o3,
+    location.latitude,
+    location.longitude
+  ]);
+
+  return {
+    contentType: "text/csv; charset=utf-8",
+    filename: `aqi-history-${location.id}-${history.timeseries.length}h.csv`,
+    body: [columns.join(","), ...rows.map((row) => row.map(escapeCsv).join(","))].join("\n")
+  };
+}
+
+export function intervalForLocation(locationId) {
+  const raw = process.env.AQI_POLL_INTERVALS_MINUTES ?? "";
+  const entries = raw.split(",").map((entry) => entry.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const [id, minutes] = entry.split(":").map((part) => part.trim());
+    if (id?.toLowerCase() === String(locationId).toLowerCase()) {
+      const parsed = Number(minutes);
+      if (Number.isFinite(parsed) && parsed >= 5) return parsed;
     }
-  }, pollMs).unref();
+  }
+  return Number(process.env.WAQI_POLL_MINUTES ?? 60);
+}
+
+export function getAqiPollingConfig() {
+  return Object.values(LOCATIONS).map((location) => ({
+    ...getAqiLocations().find((item) => item.id === location.id),
+    interval_minutes: Math.max(5, Math.round(intervalForLocation(location.id)))
+  }));
+}
+
+function scheduleLocationPoll(location) {
+  const intervalMinutes = Math.max(5, Math.round(intervalForLocation(location.id)));
+  const task = async () => {
+    try {
+      await getCurrentAqi(location.id, { forceRefresh: true });
+      logger.info("AQI scheduled refresh complete", { location_id: location.id, interval_minutes: intervalMinutes });
+    } catch (error) {
+      logger.error("AQI scheduled refresh failed", { location_id: location.id, message: error.message, code: error.code });
+    }
+  };
+
+  if (intervalMinutes < 60 && 60 % intervalMinutes === 0) {
+    cron.schedule(`*/${intervalMinutes} * * * *`, task, { timezone: "Africa/Lagos" });
+    return;
+  }
+
+  setInterval(task, intervalMinutes * 60 * 1000).unref();
+}
+
+export function startAqiPolling() {
+  for (const location of Object.values(LOCATIONS)) {
+    scheduleLocationPoll(location);
+  }
 }
 
 export function getAqiLocations() {
   return Object.values(LOCATIONS).map(({ id, name, latitude, longitude }) => ({ id, name, latitude, longitude }));
 }
-

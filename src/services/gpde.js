@@ -1,4 +1,5 @@
 import { determineStabilityClass } from "./meteoService.js";
+import { logger } from "../logger.js";
 
 const G = 9.81;
 const DEG_PER_M_LAT = 1 / 111_320;
@@ -45,6 +46,26 @@ function numeric(value, fallback = undefined) {
   return fallback;
 }
 
+function getEffectiveHeight(x, input) {
+  if (input.effective_height_override !== undefined) {
+    return input.effective_height_override;
+  }
+  return input.stack_height + plumeRise(x, input);
+}
+
+function attenuationTerm(x, input) {
+  const travelTime = x / Math.max(input.wind_speed, 0.1);
+  const chemicalDecay = input.loss_rate_override !== undefined ? Math.exp(-input.loss_rate_override * travelTime) : 1;
+
+  if (input.deposition_velocity === undefined || input.deposition_velocity <= 0) {
+    return chemicalDecay;
+  }
+
+  const mixingHeight = Math.max(1, estimateMixingHeight(input));
+  const depositionLoss = Math.exp(-(input.deposition_velocity * travelTime) / mixingHeight);
+  return chemicalDecay * depositionLoss;
+}
+
 function assertRange(value, name, min, max) {
   if (!Number.isFinite(value) || value < min || value > max) {
     throw modelError(`${name} must be between ${min} and ${max}.`, "GPDE_INPUT_INVALID");
@@ -65,7 +86,11 @@ export function validatePlumeInput(body = {}) {
     stability_class: String(body.stability_class ?? "auto").trim().toUpperCase(),
     terrain: String(body.terrain ?? "flat").trim().toLowerCase(),
     source_lat: numeric(body.source_lat, OBAJANA_DEFAULTS.source_lat),
-    source_lon: numeric(body.source_lon, OBAJANA_DEFAULTS.source_lon)
+    source_lon: numeric(body.source_lon, OBAJANA_DEFAULTS.source_lon),
+    deposition_velocity: numeric(body.deposition_velocity, undefined),
+    mixing_height_override: numeric(body.mixing_height_override, undefined),
+    loss_rate_override: numeric(body.loss_rate_override, undefined),
+    effective_height_override: numeric(body.effective_height_override, undefined)
   };
 
   assertRange(input.stack_height, "stack_height", 1, 500);
@@ -79,6 +104,18 @@ export function validatePlumeInput(body = {}) {
   assertRange(input.cloud_cover, "cloud_cover", 0, 100);
   assertRange(input.source_lat, "source_lat", -90, 90);
   assertRange(input.source_lon, "source_lon", -180, 180);
+  if (input.deposition_velocity !== undefined) {
+    assertRange(input.deposition_velocity, "deposition_velocity", 0, 0.1);
+  }
+  if (input.mixing_height_override !== undefined) {
+    assertRange(input.mixing_height_override, "mixing_height_override", 50, 5_000);
+  }
+  if (input.loss_rate_override !== undefined) {
+    assertRange(input.loss_rate_override, "loss_rate_override", 0, 10);
+  }
+  if (input.effective_height_override !== undefined) {
+    assertRange(input.effective_height_override, "effective_height_override", 1, 1_000);
+  }
 
   if (input.terrain !== "flat") {
     throw modelError("terrain must be 'flat' for KSEIP v1.0.", "GPDE_TERRAIN_UNSUPPORTED");
@@ -122,12 +159,16 @@ export function gaussianConcentration({ x, y, z = 0, input }) {
 
   const sy = sigmaY(x, input.stability_class);
   const sz = sigmaZ(x, input.stability_class);
-  const effectiveHeight = input.stack_height + plumeRise(x, input);
+  const effectiveHeight = getEffectiveHeight(x, input);
   const crosswindTerm = Math.exp(-(y ** 2) / (2 * sy ** 2));
   const reflectionTerm =
     Math.exp(-((z - effectiveHeight) ** 2) / (2 * sz ** 2)) +
     Math.exp(-((z + effectiveHeight) ** 2) / (2 * sz ** 2));
-  const gramsPerCubicMeter = (input.emission_rate / (2 * Math.PI * sy * sz * input.wind_speed)) * crosswindTerm * reflectionTerm;
+  const gramsPerCubicMeter =
+    (input.emission_rate / (2 * Math.PI * sy * sz * input.wind_speed)) *
+    crosswindTerm *
+    reflectionTerm *
+    attenuationTerm(x, input);
 
   return gramsPerCubicMeter * 1_000_000;
 }
@@ -137,10 +178,11 @@ export function groundLevelCenterline(x, input) {
 
   const sy = sigmaY(x, input.stability_class);
   const sz = sigmaZ(x, input.stability_class);
-  const effectiveHeight = input.stack_height + plumeRise(x, input);
+  const effectiveHeight = getEffectiveHeight(x, input);
   const gramsPerCubicMeter =
     (input.emission_rate / (Math.PI * sy * sz * input.wind_speed)) *
-    Math.exp(-0.5 * (effectiveHeight / sz) ** 2);
+    Math.exp(-0.5 * (effectiveHeight / sz) ** 2) *
+    attenuationTerm(x, input);
 
   return gramsPerCubicMeter * 1_000_000;
 }
@@ -168,6 +210,10 @@ function computeGrid(input) {
   const downsampled = [];
   let cmax = 0;
   let xmax = 0;
+  let totalConcentration = 0;
+  let positiveConcentration = 0;
+  let positiveCells = 0;
+  let minPositiveConcentration = Number.POSITIVE_INFINITY;
   const step = 50;
   const halfWidth = 1_000;
 
@@ -180,6 +226,13 @@ function computeGrid(input) {
         concentration: Number(concentration.toFixed(4))
       };
       fullGrid.push(row);
+      totalConcentration += concentration;
+
+      if (concentration > 0) {
+        positiveConcentration += concentration;
+        positiveCells += 1;
+        minPositiveConcentration = Math.min(minPositiveConcentration, concentration);
+      }
 
       if (x % 100 === 0 && y % 100 === 0) {
         downsampled.push([x, y, Number(concentration.toFixed(2))]);
@@ -201,7 +254,14 @@ function computeGrid(input) {
       points: downsampled
     },
     cmax: Number(cmax.toFixed(4)),
-    xmax
+    xmax,
+    stats: {
+      avg_concentration_ug_m3: Number((totalConcentration / fullGrid.length).toFixed(4)),
+      avg_positive_concentration_ug_m3: Number((positiveCells ? positiveConcentration / positiveCells : 0).toFixed(4)),
+      min_positive_concentration_ug_m3: Number((Number.isFinite(minPositiveConcentration) ? minPositiveConcentration : 0).toFixed(4)),
+      positive_grid_cells: positiveCells,
+      grid_cells: fullGrid.length
+    }
   };
 }
 
@@ -231,6 +291,62 @@ function exposureSummary(fullGrid) {
     zone2: convert(zone2),
     zone3: convert(zone3),
     zone4: convert(zone4)
+  };
+}
+
+function estimateMixingHeight(input) {
+  if (input.mixing_height_override !== undefined) {
+    return Math.round(input.mixing_height_override);
+  }
+  const baseByStability = {
+    A: 1_600,
+    B: 1_250,
+    C: 950,
+    D: 700,
+    E: 420,
+    F: 280
+  };
+  const windAdjustment = Math.min(420, input.wind_speed * 55);
+  const cloudAdjustment = input.cloud_cover > 80 ? -120 : input.cloud_cover < 35 ? 180 : 0;
+  return Math.max(120, Math.round((baseByStability[input.stability_class] ?? 700) + windAdjustment + cloudAdjustment));
+}
+
+function lossRateSummary(fullGrid, cmax, xmax, input) {
+  if (input?.loss_rate_override !== undefined) {
+    return {
+      percent_per_km: Number(input.loss_rate_override.toFixed(2)),
+      downwind_reference_m: xmax,
+      reference_concentration_ug_m3: Number(cmax.toFixed(4))
+    };
+  }
+  const downwindMaxima = new Map();
+
+  for (const point of fullGrid) {
+    if (point.x < Math.max(100, xmax) || point.concentration <= 0) continue;
+    const current = downwindMaxima.get(point.x) ?? 0;
+    downwindMaxima.set(point.x, Math.max(current, point.concentration));
+  }
+
+  const rows = [...downwindMaxima.entries()]
+    .map(([x, concentration]) => ({ x, concentration }))
+    .sort((a, b) => a.x - b.x);
+
+  const endpoint = rows[rows.length - 1];
+  if (!endpoint || cmax <= 0 || endpoint.x <= xmax) {
+    return {
+      percent_per_km: 0,
+      downwind_reference_m: endpoint?.x ?? xmax,
+      reference_concentration_ug_m3: Number((endpoint?.concentration ?? cmax).toFixed(4))
+    };
+  }
+
+  const distanceKm = (endpoint.x - xmax) / 1_000;
+  const retainedFraction = Math.max(0, Math.min(1, endpoint.concentration / cmax));
+
+  return {
+    percent_per_km: Number((((1 - retainedFraction) / distanceKm) * 100).toFixed(2)),
+    downwind_reference_m: endpoint.x,
+    reference_concentration_ug_m3: Number(endpoint.concentration.toFixed(4))
   };
 }
 
@@ -293,13 +409,20 @@ function buildIsopleths(input, fullGrid) {
 export async function runPlumeModel(body = {}) {
   const startedAt = performance.now();
   const input = validatePlumeInput(body);
-  const { fullGrid, grid_json, cmax, xmax } = computeGrid(input);
+  const { fullGrid, grid_json, cmax, xmax, stats } = computeGrid(input);
   const isopleths_geojson = buildIsopleths(input, fullGrid);
+  const mixingHeightM = estimateMixingHeight(input);
+  const lossRate = lossRateSummary(fullGrid, cmax, xmax, input);
+  const effectiveHeight = input.effective_height_override !== undefined
+    ? input.effective_height_override
+    : input.stack_height + plumeRise(Math.max(xmax, 100), input);
+  
   const result = {
     grid_json,
     isopleths_geojson,
     cmax,
     xmax,
+    stats,
     exposure_summary: exposureSummary(fullGrid),
     beyond_range: false,
     metadata: {
@@ -311,6 +434,14 @@ export async function runPlumeModel(body = {}) {
         lat: input.source_lat,
         lon: input.source_lon
       },
+      diagnostics: {
+        mixing_height_m: mixingHeightM,
+        effective_stack_height_m: Number(effectiveHeight.toFixed(2)),
+        deposition_velocity_m_s: input.deposition_velocity,
+        loss_rate: lossRate,
+        wind_speed_m_s: input.wind_speed,
+        wind_direction_deg: input.wind_dir
+      },
       assumptions: {
         terrain: "flat",
         valid_x_range_m: [100, 10_000],
@@ -321,6 +452,10 @@ export async function runPlumeModel(body = {}) {
   };
 
   const elapsedMs = performance.now() - startedAt;
-  console.log(`[gpde] model executed in ${elapsedMs.toFixed(2)} ms; Cmax=${cmax} ug/m3 at x=${xmax} m`);
+  logger.info("GPDE model executed", {
+    elapsed_ms: Number(elapsedMs.toFixed(2)),
+    cmax_ug_m3: cmax,
+    xmax_m: xmax
+  });
   return result;
 }

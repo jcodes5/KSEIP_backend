@@ -12,6 +12,7 @@ import healthRoutes from "./routes/health.js";
 import meteoRoutes from "./routes/meteo.js";
 import plumeRoutes from "./routes/plume.js";
 import statusRoutes from "./routes/status.js";
+import { logger } from "./logger.js";
 import { startAqiPolling } from "./services/aqiService.js";
 import { startMeteoRefresh } from "./services/meteoService.js";
 
@@ -78,15 +79,15 @@ app.use((error, req, res, next) => {
   // Enhanced logging for network/DNS errors
   if (status >= 500) {
     if (error.cause && error.cause.code) {
-      // Log specific details for network errors
-      console.error(`[server] unhandled error: ${error.message}`, {
+      logger.error("Unhandled server error", {
+        message: error.message,
         code: error.cause.code,
         syscall: error.cause.syscall,
         hostname: error.cause.hostname,
         stack: error.stack
       });
     } else {
-      console.error("[server] unhandled error:", error);
+      logger.error("Unhandled server error", { error });
     }
   }
 
@@ -98,9 +99,9 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(port, () => {
-  console.log(`[server] KSEIP backend listening on port ${port}`);
-  console.log(`[server] CORS origins: ${corsOrigins.join(", ")}`);
-  console.log(`[server] Swagger documentation available at http://localhost:${port}/api-docs`);
+  logger.info("KSEIP backend listening", { port });
+  logger.info("CORS origins configured", { origins: corsOrigins });
+  logger.info("Swagger documentation available", { url: `http://localhost:${port}/api-docs` });
   startAqiPolling();
   startMeteoRefresh();
 });

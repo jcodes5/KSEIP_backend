@@ -57,6 +57,47 @@ test("ground-level centerline equals full Gaussian equation at y=0,z=0", () => {
   assert.ok(Math.abs(full - centerline) < 1e-9);
 });
 
+test("effective height override participates in concentration calculations", () => {
+  const base = validatePlumeInput({
+    ...referenceInput,
+    stack_height: 20,
+    emission_rate: 100,
+    wind_speed: 3
+  });
+  const overridden = validatePlumeInput({
+    ...referenceInput,
+    stack_height: 20,
+    emission_rate: 100,
+    wind_speed: 3,
+    effective_height_override: 500
+  });
+
+  const baseConcentration = groundLevelCenterline(500, base);
+  const overriddenConcentration = groundLevelCenterline(500, overridden);
+
+  assert.notEqual(baseConcentration, overriddenConcentration);
+  assert.ok(overriddenConcentration < baseConcentration);
+});
+
+test("deposition velocity attenuates downwind concentration", () => {
+  const base = validatePlumeInput({
+    ...referenceInput,
+    stack_height: 20,
+    emission_rate: 100,
+    wind_speed: 3
+  });
+  const deposited = validatePlumeInput({
+    ...referenceInput,
+    stack_height: 20,
+    emission_rate: 100,
+    wind_speed: 3,
+    deposition_velocity: 0.05,
+    mixing_height_override: 100
+  });
+
+  assert.ok(groundLevelCenterline(1_500, deposited) < groundLevelCenterline(1_500, base));
+});
+
 test("runs GPDE and returns required response fields", async () => {
   const result = await runPlumeModel(referenceInput);
 

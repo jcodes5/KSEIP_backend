@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from './utils.js';
+import { logger } from "../logger.js";
 
 const LOKOJA = {
   latitude: Number(process.env.LOKOJA_LAT ?? 7.8),
@@ -127,11 +128,11 @@ async function fetchOpenMeteo(hours = 48) {
 export async function getCurrentMeteo() {
   const now = Date.now();
   if (forecastCache && now - forecastCache.cachedAt < FORECAST_TTL_MS) {
-    console.log("[meteo] cache hit: current meteorology");
+    logger.info("Meteo cache hit", { dataset: "current" });
     return forecastCache.current;
   }
 
-  console.log("[meteo] cache miss: fetching Open-Meteo current and forecast");
+  logger.info("Meteo cache miss; fetching Open-Meteo current and forecast");
   const payload = await fetchOpenMeteo(48);
   const current = normalizeCurrent(payload);
   const forecast = normalizeForecast(payload, 48);
@@ -150,14 +151,14 @@ export async function getMeteoForecast(hours = 48) {
   const now = Date.now();
 
   if (forecastCache && now - forecastCache.cachedAt < FORECAST_TTL_MS) {
-    console.log("[meteo] cache hit: forecast");
+    logger.info("Meteo cache hit", { dataset: "forecast", hours: requestedHours });
     return {
       hourly: forecastCache.forecast.hourly.slice(0, requestedHours),
       boundary_layer_height: forecastCache.forecast.boundary_layer_height
     };
   }
 
-  console.log("[meteo] cache miss: fetching Open-Meteo forecast");
+  logger.info("Meteo cache miss; fetching Open-Meteo forecast", { hours: requestedHours });
   const payload = await fetchOpenMeteo(requestedHours);
   const current = normalizeCurrent(payload);
   const forecast = normalizeForecast(payload, requestedHours);
@@ -176,9 +177,9 @@ export function startMeteoRefresh() {
   setInterval(async () => {
     try {
       await getMeteoForecast(48);
-      console.log("[meteo] scheduled refresh complete");
+      logger.info("Meteo scheduled refresh complete");
     } catch (error) {
-      console.error("[meteo] scheduled refresh failed:", error.message);
+      logger.error("Meteo scheduled refresh failed", { message: error.message, code: error.code });
     }
   }, refreshMs).unref();
 }

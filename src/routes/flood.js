@@ -1,5 +1,5 @@
 import express from "express";
-import { getFloodRisk } from "../services/floodService.js";
+import { getFloodLocations, getFloodRisk } from "../services/floodService.js";
 
 const router = express.Router();
 
@@ -46,11 +46,17 @@ const router = express.Router();
  */
 router.get("/risk", async (req, res, next) => {
   try {
-    const data = await getFloodRisk();
+    const data = await getFloodRisk(req.query.location ?? "lokoja");
     res.json(data);
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/locations", (req, res) => {
+  res.json({
+    locations: getFloodLocations()
+  });
 });
 
 export default router;
