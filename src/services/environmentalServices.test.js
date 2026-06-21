@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { calculateAnnualSpi } from "./climateService.js";
 import { getFloodLocations, resolveTodayIndex } from "./floodService.js";
 import { getAqiHistoryExport, getAqiLocations, getCurrentAqi, intervalForLocation } from "./aqiService.js";
+import { buildHealthAdvisory } from "./advisoryEngine.js";
 
 test("AQI monitored nodes include Kabba and Idah", () => {
   const ids = getAqiLocations().map((location) => location.id);
@@ -187,4 +188,23 @@ test("annual SPI flags dry, normal, and wet years from rainfall z-scores", () =>
   assert.ok(spi[0].spi < 0);
   assert.equal(spi[2].category, "near normal");
   assert.equal(spi[4].category, "wet");
+});
+
+test("health advisory includes pollutant-specific and data-quality rationale", () => {
+  const advisory = buildHealthAdvisory(125, 125, {
+    aqi: 90,
+    advisory_aqi: 125,
+    dominant_pollutant: "pm25",
+    primary_source: "Open-Meteo Air Quality",
+    location: "Lokoja",
+    location_id: "lokoja",
+    stale: false
+  });
+
+  assert.equal(advisory.category, "Unhealthy for Sensitive Groups");
+  assert.equal(advisory.pollutant_guidance.pollutant, "PM2.5");
+  assert.equal(advisory.data_quality.confidence, "conservative");
+  assert.equal(advisory.advisory_basis.measured_aqi, 90);
+  assert.equal(advisory.advisory_basis.advisory_aqi, 125);
+  assert.match(advisory.action_priority, /sensitive groups/i);
 });

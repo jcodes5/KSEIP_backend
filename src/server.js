@@ -12,6 +12,7 @@ import healthRoutes from "./routes/health.js";
 import meteoRoutes from "./routes/meteo.js";
 import plumeRoutes from "./routes/plume.js";
 import statusRoutes from "./routes/status.js";
+import weatherRoutes from "./routes/weather.js";
 import { logger } from "./logger.js";
 import { startAqiPolling } from "./services/aqiService.js";
 import { startMeteoRefresh } from "./services/meteoService.js";
@@ -54,6 +55,7 @@ app.use("/api/health", healthRoutes);
 app.use("/api/fire", fireRoutes);
 app.use("/api/flood", floodRoutes);
 app.use("/api/status", statusRoutes);
+app.use("/api/weather", weatherRoutes);
 
 app.get("/health", (req, res) => {
   res.json({

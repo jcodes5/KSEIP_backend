@@ -102,10 +102,73 @@ export function getAqiBand(aqi) {
   return EPA_AQI_BANDS.find((band) => value >= band.min && value <= band.max) ?? EPA_AQI_BANDS[5];
 }
 
-export function buildHealthAdvisory(currentAqi, forecastAqi = currentAqi) {
+function normalizePollutant(value) {
+  const key = String(value ?? "aqi").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return {
+    pm25: "PM2.5",
+    pm10: "PM10",
+    no2: "NO2",
+    so2: "SO2",
+    co: "CO",
+    o3: "O3",
+    usaqi: "AQI",
+    aqi: "AQI"
+  }[key] ?? String(value ?? "AQI").toUpperCase();
+}
+
+function pollutantGuidance(pollutant) {
+  const label = normalizePollutant(pollutant);
+  const guidance = {
+    "PM2.5": "Fine particles can enter deep into the lungs. Prioritize indoor air filtration and reduce outdoor exertion.",
+    PM10: "Coarse dust can irritate the eyes, nose, throat, and airways. Reduce dusty outdoor work and use fitted masks where exposure is unavoidable.",
+    NO2: "Nitrogen dioxide can worsen asthma and airway inflammation, especially near traffic and combustion sources.",
+    SO2: "Sulphur dioxide can trigger bronchospasm in sensitive people. People with asthma should keep rescue medication nearby.",
+    CO: "Carbon monoxide affects oxygen delivery. People with heart disease, pregnant people, and infants need extra caution.",
+    O3: "Ozone can reduce lung function during outdoor exertion. Move exercise and school sports indoors when levels rise."
+  };
+
+  return {
+    pollutant: label,
+    guidance: guidance[label] ?? "Use the advisory AQI level for protective action and watch for respiratory symptoms."
+  };
+}
+
+function dataQualityContext(context = {}) {
+  if (context.stale) {
+    return {
+      confidence: "limited",
+      note: "This advisory is based on the most recent cached AQI reading. Confirm conditions before public emergency communication."
+    };
+  }
+
+  if (Number.isFinite(Number(context.advisory_aqi)) && Number.isFinite(Number(context.aqi)) && Number(context.advisory_aqi) > Number(context.aqi)) {
+    return {
+      confidence: "conservative",
+      note: "Validation data reported a higher AQI than the primary source, so KSEIP selected the more protective advisory level."
+    };
+  }
+
+  return {
+    confidence: "standard",
+    note: "Advisory is based on the latest available AQI reading for the selected Kogi monitoring node."
+  };
+}
+
+function buildActionPriority(level, pollutant) {
+  const pollutantLabel = normalizePollutant(pollutant);
+  if (level >= 4) return `Emergency-level air quality response. Keep vulnerable groups indoors and minimize all outdoor exposure. Dominant driver: ${pollutantLabel}.`;
+  if (level === 3) return `Reduce outdoor exposure for everyone and move strenuous activities indoors. Dominant driver: ${pollutantLabel}.`;
+  if (level === 2) return `Protect sensitive groups first. Children, elderly people, pregnant people, and respiratory patients should reduce outdoor exertion. Dominant driver: ${pollutantLabel}.`;
+  if (level === 1) return `Most people can continue normal activity, but very sensitive people should reduce prolonged exertion. Dominant driver: ${pollutantLabel}.`;
+  return `Air quality is acceptable for normal outdoor activity. Continue routine monitoring. Dominant driver: ${pollutantLabel}.`;
+}
+
+export function buildHealthAdvisory(currentAqi, forecastAqi = currentAqi, context = {}) {
   const currentBand = getAqiBand(currentAqi);
   const forecastBand = getAqiBand(forecastAqi);
   const healthGuidance = getHealthGuidance(currentBand.level);
+  const pollutant = pollutantGuidance(context.dominant_pollutant);
+  const quality = dataQualityContext(context);
 
   return {
     // Basic info
@@ -118,6 +181,18 @@ export function buildHealthAdvisory(currentAqi, forecastAqi = currentAqi) {
     health_statement: healthGuidance.health_statement,
     advisory_text: currentBand.advisory_text,
     sensitive_groups_text: currentBand.sensitive_groups_text,
+    action_priority: buildActionPriority(currentBand.level, pollutant.pollutant),
+    pollutant_guidance: pollutant,
+    data_quality: quality,
+    advisory_basis: {
+      location: context.location,
+      location_id: context.location_id,
+      measured_aqi: Number(context.aqi ?? currentAqi),
+      advisory_aqi: Number(currentAqi),
+      dominant_pollutant: pollutant.pollutant,
+      primary_source: context.primary_source,
+      stale: Boolean(context.stale)
+    },
     
     // Health impacts
     health_impacts: healthGuidance.health_impacts,
@@ -142,4 +217,3 @@ export function buildHealthAdvisory(currentAqi, forecastAqi = currentAqi) {
     timestamp: new Date().toISOString()
   };
 }
-

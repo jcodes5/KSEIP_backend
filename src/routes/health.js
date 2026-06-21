@@ -63,7 +63,7 @@ router.get("/advisory", async (req, res, next) => {
     const location = req.query.location ?? "lokoja";
     const current = await getCurrentAqi(location);
     const advisoryAqi = current.advisory_aqi ?? current.aqi ?? 0;
-    const data = buildHealthAdvisory(advisoryAqi, advisoryAqi);
+    const data = buildHealthAdvisory(advisoryAqi, advisoryAqi, current);
     res.json({
       ...data,
       timestamp: current.timestamp
