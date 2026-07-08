@@ -67,6 +67,38 @@ test("weather LGA registry includes all Kogi LGAs with coordinates", () => {
   assert.equal(getKogiLga("igalamela odolu").id, "igalamela-odolu");
 });
 
+test("weather coordinate helper resolves the nearest Kogi LGA", () => {
+  const nearest = weatherServiceTestUtils.findNearestKogiLga(7.8, 6.74);
+
+  assert.equal(nearest.id, "lokoja");
+  assert.ok(nearest.distanceKm >= 0);
+  assert.match(weatherServiceTestUtils.buildCoordinateCacheKey(7.81234, 6.74444), /^7\.8123:6\.7444$/);
+});
+
+test("coordinate weather separates browser location from nearest Kogi weather node", () => {
+  const nearest = weatherServiceTestUtils.findNearestKogiLga(6.5244, 3.3792);
+  const current = weatherServiceTestUtils.normalizeCoordinateWeather(
+    samplePayload,
+    {
+      id: "6.5244:3.3792",
+      name: "Lagos",
+      source: "reverse-geocode",
+      latitude: 6.5244,
+      longitude: 3.3792,
+      accuracy_m: 25
+    },
+    nearest
+  );
+
+  assert.equal(current.location, "Lagos");
+  assert.equal(current.detected_location, "Lagos");
+  assert.equal(current.detected_location_source, "reverse-geocode");
+  assert.equal(current.nearest_lga, nearest.name);
+  assert.equal(current.nearest_lga_id, nearest.id);
+  assert.equal(current.query_coordinates.accuracy_m, 25);
+  assert.equal(current.outside_kogi_coverage, true);
+});
+
 test("Open-Meteo weather URL uses latitude and longitude, not LGA name lookup", () => {
   const lga = getKogiLga("lokoja");
   const url = weatherServiceTestUtils.buildOpenMeteoUrl(lga, 7);

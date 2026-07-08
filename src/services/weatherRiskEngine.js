@@ -197,6 +197,35 @@ function recommendationFor(lgaName, score, intelligence) {
   return `Weather risk is low in ${lgaName}. Continue routine monitoring and normal outdoor activity.`;
 }
 
+function assessmentSummary(intelligence) {
+  return [
+    {
+      metric: "flood",
+      label: "Flood risk",
+      score: intelligence.floodRisk?.score ?? 0,
+      level: intelligence.floodRisk?.level ?? "LOW"
+    },
+    {
+      metric: "heat",
+      label: "Heat risk",
+      score: intelligence.heatRisk?.score ?? 0,
+      level: intelligence.heatRisk?.level ?? "LOW"
+    },
+    {
+      metric: "storm",
+      label: "Storm risk",
+      score: intelligence.stormRisk?.score ?? 0,
+      level: intelligence.stormRisk?.level ?? "LOW"
+    },
+    {
+      metric: "road",
+      label: "Road risk",
+      score: intelligence.roadRisk?.score ?? 0,
+      level: intelligence.roadRisk?.level ?? "LOW"
+    }
+  ].sort((left, right) => right.score - left.score);
+}
+
 export function buildWeatherIntelligence({ lga, current, dailyForecast = [] }) {
   const weatherScore = calculateWeatherScore(current);
   const floodRisk = calculateFloodRisk(current, dailyForecast, lga.riskProfile);
@@ -219,6 +248,8 @@ export function buildWeatherIntelligence({ lga, current, dailyForecast = [] }) {
 
   return {
     ...intelligence,
+    assessmentMethod: "rule-based",
+    assessmentSummary: assessmentSummary(intelligence),
     recommendationText: recommendationFor(lga.name, weatherScore.score, intelligence)
   };
 }

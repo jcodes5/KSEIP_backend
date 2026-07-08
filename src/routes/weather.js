@@ -1,6 +1,7 @@
 import express from "express";
 import {
   getCurrentWeather,
+  getCurrentWeatherByCoordinates,
   getWeatherForecast,
   getWeatherIntelligence,
   getWeatherLgas,
@@ -25,6 +26,18 @@ router.get("/lgas", (req, res) => {
 router.get("/current", async (req, res, next) => {
   try {
     const data = await getCurrentWeather(req.query.lga ?? "lokoja", {
+      forceRefresh: req.query.refresh === "true"
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/current-by-coordinates", async (req, res, next) => {
+  try {
+    const data = await getCurrentWeatherByCoordinates(req.query.lat, req.query.lon, {
+      accuracy: req.query.accuracy,
       forceRefresh: req.query.refresh === "true"
     });
     res.json(data);

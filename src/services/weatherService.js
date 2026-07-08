@@ -6,9 +6,12 @@ import { buildWeatherIntelligence, weatherCodeToCondition } from "./weatherRiskE
 const CURRENT_TTL_MS = Number(process.env.WEATHER_CURRENT_CACHE_MINUTES ?? 15) * 60 * 1000;
 const FORECAST_TTL_MS = Number(process.env.WEATHER_FORECAST_CACHE_HOURS ?? 6) * 60 * 60 * 1000;
 const MAX_DAYS = 7;
+const KOGI_COVERAGE_RADIUS_KM = Number(process.env.WEATHER_KOGI_COVERAGE_RADIUS_KM ?? 80);
 
 const currentCache = new Map();
 const forecastCache = new Map();
+const coordinateCurrentCache = new Map();
+const reverseGeocodeCache = new Map();
 
 function serviceError(message, code, status = 503) {
   const error = new Error(message);
@@ -99,10 +102,128 @@ async function fetchOpenMeteo(lga, days = MAX_DAYS) {
   return response.json();
 }
 
+async function fetchReverseGeocode(latitude, longitude) {
+  const cacheKey = buildCoordinateCacheKey(latitude, longitude);
+  const cached = reverseGeocodeCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < 24 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const timeout = Number(process.env.FETCH_TIMEOUT_MS ?? 30000);
+  const url = new URL("https://nominatim.openstreetmap.org/reverse");
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("lat", String(latitude));
+  url.searchParams.set("lon", String(longitude));
+  url.searchParams.set("zoom", "12");
+  url.searchParams.set("addressdetails", "1");
+
+  try {
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        headers: {
+          accept: "application/json",
+          "user-agent": "KSEIP/1.0 (weather location lookup)"
+        }
+      },
+      timeout
+    );
+
+    if (!response.ok) {
+      throw serviceError(`Reverse geocoding failed with status ${response.status}.`, "WEATHER_REVERSE_GEOCODE_FAILED");
+    }
+
+    const payload = await response.json();
+    const address = payload?.address ?? {};
+    const locationName = address.city ?? address.town ?? address.village ?? address.municipality ?? address.county ?? address.state_district ?? address.state ?? payload?.name ?? payload?.display_name ?? "Detected location";
+
+    const result = {
+      name: locationName,
+      displayName: payload?.display_name ?? locationName,
+      state: address.state ?? null,
+      county: address.county ?? null,
+      district: address.state_district ?? null,
+      locality: address.city ?? address.town ?? address.village ?? address.municipality ?? null,
+      raw: payload
+    };
+
+    reverseGeocodeCache.set(cacheKey, { cachedAt: Date.now(), data: result });
+    return result;
+  } catch (error) {
+    logger.warn("Reverse geocoding failed", { latitude, longitude, message: error.message, code: error.code });
+    return null;
+  }
+}
+
 function average(values) {
   const numeric = values.map(Number).filter(Number.isFinite);
   if (!numeric.length) return null;
   return round(numeric.reduce((sum, value) => sum + value, 0) / numeric.length, 1);
+}
+
+function toFiniteNumber(value, fieldName) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw serviceError(`${fieldName} must be a valid number.`, "WEATHER_INVALID_COORDINATES", 400);
+  }
+  return numeric;
+}
+
+function haversineKm(latitudeA, longitudeA, latitudeB, longitudeB) {
+  const earthRadiusKm = 6371;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const deltaLatitude = toRadians(latitudeB - latitudeA);
+  const deltaLongitude = toRadians(longitudeB - longitudeA);
+  const latA = toRadians(latitudeA);
+  const latB = toRadians(latitudeB);
+
+  const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(deltaLongitude / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.sqrt(a));
+}
+
+function buildCoordinateCacheKey(latitude, longitude) {
+  return `${Number(latitude).toFixed(4)}:${Number(longitude).toFixed(4)}`;
+}
+
+function findNearestKogiLga(latitude, longitude) {
+  const lgas = getKogiLgas();
+  let nearest = null;
+
+  for (const lga of lgas) {
+    const distanceKm = haversineKm(latitude, longitude, lga.latitude, lga.longitude);
+    if (!nearest || distanceKm < nearest.distanceKm) {
+      nearest = { ...lga, distanceKm };
+    }
+  }
+
+  if (!nearest) {
+    throw serviceError("Kogi LGA lookup failed.", "WEATHER_LOCATION_LOOKUP_FAILED", 503);
+  }
+
+  return nearest;
+}
+
+function normalizeCoordinateWeather(payload, coordinateLocation, nearestLga, stale = false, cachedAt = null, fromCache = false) {
+  const current = normalizeCurrent(payload, coordinateLocation, stale, cachedAt, fromCache);
+  const distanceKm = round(nearestLga.distanceKm, 1);
+
+  return {
+    ...current,
+    location: coordinateLocation.name,
+    detected_location: coordinateLocation.name,
+    detected_location_source: coordinateLocation.source ?? "coordinates",
+    nearest_lga: nearestLga.name,
+    nearest_lga_id: nearestLga.id,
+    nearest_lga_distance_km: distanceKm,
+    detected_lga_id: nearestLga.id,
+    detected_distance_km: distanceKm,
+    outside_kogi_coverage: nearestLga.distanceKm > KOGI_COVERAGE_RADIUS_KM,
+    query_coordinates: {
+      latitude: coordinateLocation.latitude,
+      longitude: coordinateLocation.longitude,
+      accuracy_m: coordinateLocation.accuracy_m ?? null
+    }
+  };
 }
 
 function normalizeCurrent(payload, lga, stale = false, cachedAt = null, fromCache = false) {
@@ -248,6 +369,12 @@ function staleForecast(lga, days = MAX_DAYS) {
   return buildForecast(cached.payload, lga, days, true, cached.cachedAt, true);
 }
 
+function staleCoordinateCurrent(cacheKey, coordinateLocation, nearestLga) {
+  const cached = coordinateCurrentCache.get(cacheKey);
+  if (!cached) return null;
+  return normalizeCoordinateWeather(cached.payload, coordinateLocation, nearestLga, true, cached.cachedAt, true);
+}
+
 export function getWeatherLgas() {
   return getKogiLgas();
 }
@@ -269,6 +396,86 @@ export async function getCurrentWeather(lgaId = "lokoja", options = {}) {
     logger.warn("Weather current fetch failed", { lga_id: lga.id, message: error.message, code: error.code });
     const stale = staleCurrent(lga);
     if (stale) return { ...stale, warning: "Weather source failed; showing the most recent cached current conditions." };
+    throw error;
+  }
+}
+
+export async function getCurrentWeatherByCoordinates(latitude, longitude, options = {}) {
+  const normalizedLatitude = toFiniteNumber(latitude, "latitude");
+  const normalizedLongitude = toFiniteNumber(longitude, "longitude");
+  const normalizedAccuracy = options.accuracy == null ? null : toFiniteNumber(options.accuracy, "accuracy");
+  const nearestLga = findNearestKogiLga(normalizedLatitude, normalizedLongitude);
+  const cacheKey = buildCoordinateCacheKey(normalizedLatitude, normalizedLongitude);
+  const cached = coordinateCurrentCache.get(cacheKey);
+  const reverseGeocode = await fetchReverseGeocode(normalizedLatitude, normalizedLongitude);
+  const resolvedLocationName = reverseGeocode?.name ?? "Browser coordinates";
+  const resolvedLocationSource = reverseGeocode ? "reverse-geocode" : "browser-geolocation";
+
+  if (!options.forceRefresh && cached && Date.now() - cached.cachedAt < CURRENT_TTL_MS) {
+    logger.info("Weather coordinate cache hit", {
+      latitude: normalizedLatitude,
+      longitude: normalizedLongitude,
+      lga_id: nearestLga.id
+    });
+    return {
+      ...normalizeCoordinateWeather(cached.payload, {
+        id: cacheKey,
+        name: resolvedLocationName,
+        source: resolvedLocationSource,
+        latitude: normalizedLatitude,
+        longitude: normalizedLongitude,
+        accuracy_m: normalizedAccuracy
+      }, nearestLga, false, cached.cachedAt, true),
+      detected_location_display_name: reverseGeocode?.displayName ?? resolvedLocationName,
+      cached: true,
+      stale: false,
+      cached_at: new Date(cached.cachedAt).toISOString()
+    };
+  }
+
+  const coordinateLocation = {
+    id: cacheKey,
+    name: resolvedLocationName,
+    source: resolvedLocationSource,
+    latitude: normalizedLatitude,
+    longitude: normalizedLongitude,
+    accuracy_m: normalizedAccuracy
+  };
+
+  try {
+    logger.info("Weather coordinate cache miss; fetching Open-Meteo", {
+      latitude: normalizedLatitude,
+      longitude: normalizedLongitude,
+      nearest_lga_id: nearestLga.id
+    });
+    const payload = await fetchOpenMeteo(coordinateLocation, MAX_DAYS);
+    const cachedAt = Date.now();
+    const current = normalizeCoordinateWeather(payload, coordinateLocation, nearestLga, false, cachedAt, false);
+    coordinateCurrentCache.set(cacheKey, { cachedAt, payload, data: current });
+
+    return {
+      ...current,
+      detected_location_display_name: reverseGeocode?.displayName ?? resolvedLocationName,
+      cached: false,
+      stale: false,
+      cached_at: new Date(cachedAt).toISOString()
+    };
+  } catch (error) {
+    logger.warn("Weather coordinate fetch failed", {
+      latitude: normalizedLatitude,
+      longitude: normalizedLongitude,
+      nearest_lga_id: nearestLga.id,
+      message: error.message,
+      code: error.code
+    });
+    const stale = staleCoordinateCurrent(cacheKey, coordinateLocation, nearestLga);
+    if (stale) {
+      return {
+        ...stale,
+        detected_location_display_name: reverseGeocode?.displayName ?? resolvedLocationName,
+        warning: "Weather source failed; showing the most recent cached current conditions."
+      };
+    }
     throw error;
   }
 }
@@ -369,5 +576,9 @@ export const weatherServiceTestUtils = {
   normalizeCurrent,
   normalizeHourly,
   normalizeDaily,
-  cachePayload
+  normalizeCoordinateWeather,
+  cachePayload,
+  buildCoordinateCacheKey,
+  findNearestKogiLga,
+  haversineKm
 };
